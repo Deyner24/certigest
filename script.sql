@@ -21,23 +21,24 @@
 	);
 
 	CREATE TABLE EVENTO (
-		ID INT AUTO_INCREMENT PRIMARY KEY NOT NULL,
+		CODIGO VARCHAR(10) UNIQUE NOT NULL,
 		TITULO VARCHAR(70) NOT NULL,
 		IMAGEN LONGBLOB NULL,
+        TIPO ENUM('EVENTO', 'TALLER') NOT NULL DEFAULT 'EVENTO',
 		FECHA TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
 
 	CREATE TABLE ASISTENCIA (
 		DNI CHAR(8) NOT NULL,
-		ID_EVENTO INT NOT NULL,
+		CODIGO_EVENTO VARCHAR(10) NOT NULL,
 		ASISTIO BOOLEAN NOT NULL, 
-		CONSTRAINT pk_asistencia PRIMARY KEY (DNI, ID_EVENTO),
+		CONSTRAINT pk_asistencia PRIMARY KEY (DNI, CODIGO_EVENTO),
 		CONSTRAINT fk_asistencia_asistente 
 			FOREIGN KEY (DNI) REFERENCES ASISTENTE(DNI)
 			ON UPDATE CASCADE
 			ON DELETE CASCADE,
 		CONSTRAINT fk_asistencia_evento 
-			FOREIGN KEY (ID_EVENTO) REFERENCES EVENTO(ID)
+			FOREIGN KEY (CODIGO_EVENTO) REFERENCES EVENTO(CODIGO)
 			ON UPDATE CASCADE
 			ON DELETE CASCADE
 	);
@@ -117,15 +118,33 @@ DELIMITER ;
 DELIMITER //
 CREATE PROCEDURE insertar_evento(
   IN p_titulo VARCHAR(70),
-  IN p_imagen LONGBLOB
+  IN p_imagen LONGBLOB,
+  IN p_tipo ENUM('EVENTO', 'TALLER'),
+  OUT p_codigo_generado VARCHAR(10)
 )
 BEGIN
+  DECLARE prefijo CHAR(1);
+  DECLARE ultimo_codigo INT;
+  DECLARE nuevo_codigo VARCHAR(10);
+
   IF p_titulo IS NULL OR TRIM(p_titulo) = '' THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El título del evento no puede estar vacío';
   ELSEIF p_imagen IS NULL THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'La imagen del evento no puede estar vacía';
   ELSE
-    INSERT INTO EVENTO (TITULO, IMAGEN) VALUES (p_titulo, p_imagen);
+    SET prefijo = IF(p_tipo = 'EVENTO', 'E', 'T');
+
+    SELECT IFNULL(MAX(CAST(SUBSTRING(CODIGO, 2) AS UNSIGNED)), 0)
+    INTO ultimo_codigo
+    FROM EVENTO
+    WHERE TIPO = p_tipo;
+
+    SET nuevo_codigo = CONCAT(prefijo, LPAD(ultimo_codigo + 1, 3, '0'));
+
+    INSERT INTO EVENTO(TITULO, IMAGEN, TIPO, CODIGO) 
+    VALUES(p_titulo, p_imagen, p_tipo, nuevo_codigo);
+
+    SET p_codigo_generado = nuevo_codigo;
   END IF;
 END;
 //
@@ -135,7 +154,7 @@ DELIMITER ;
 DELIMITER //
 CREATE PROCEDURE insertar_asistencia(
   IN p_dni CHAR(8),
-  IN p_id_evento INT,
+  IN p_codigo_evento VARCHAR(10),
   IN p_asistio BOOLEAN
 )
 BEGIN
@@ -148,17 +167,25 @@ BEGIN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Valor de ASISTIO inválido: debe ser 0 o 1';
   ELSE
     SELECT COUNT(*) INTO existe_asistente FROM ASISTENTE WHERE DNI = p_dni;
-    SELECT COUNT(*) INTO existe_evento FROM EVENTO WHERE ID = p_id_evento;
+    SELECT COUNT(*) INTO existe_evento FROM EVENTO WHERE CODIGO = p_codigo_evento;
 
     IF existe_asistente = 0 THEN
       SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El DNI no corresponde a ningún asistente registrado';
     ELSEIF existe_evento = 0 THEN
-      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El ID del evento no existe';
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El codigo del evento no existe';
     ELSE
-      INSERT INTO ASISTENCIA(DNI, ID_EVENTO, ASISTIO)
-      VALUES(p_dni, p_id_evento, p_asistio);
+      INSERT INTO ASISTENCIA(DNI, CODIGO_EVENTO, ASISTIO)
+      VALUES(p_dni, p_codigo_evento, p_asistio);
     END IF;
   END IF;
+END;
+//
+DELIMITER ;
+
+DELIMITER //
+CREATE PROCEDURE cargar_eventos()
+BEGIN 
+	SELECT CODIGO, TITULO, DATE_FORMAT(FECHA, '%d-%m-%Y') AS FECHA FROM EVENTO;
 END;
 //
 DELIMITER ;

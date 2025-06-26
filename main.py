@@ -4,8 +4,8 @@ from PIL import Image, ImageTk
 import mysql.connector
 import pandas as pd
 import os
+import io
 
-# Diccionario: nombre carrera → ID
 carrera_map = {
     "COMUNICACIÓN SOCIAL": "01",
     "EDUCACIÓN SOCIAL": "02",
@@ -43,7 +43,7 @@ carrera_map = {
     "TECNOLOGÍA MÉDICA": "34",
 }
 
-# Conexion a base de datos
+
 def conectar_db():
     return mysql.connector.connect(
         host="localhost",
@@ -52,8 +52,7 @@ def conectar_db():
         database="CertiGest"
     )
 
-# Exportar asistentes por carrera en Excel
-def exportar_asistentes(evento_id, evento_nombre):
+def exportar_asistentes(evento_CODIGO, evento_nombre):
     conn = conectar_db()
     cursor = conn.cursor(dictionary=True)
 
@@ -62,8 +61,8 @@ def exportar_asistentes(evento_id, evento_nombre):
         FROM ASISTENTE a
         JOIN CARRERA c ON a.ID_CARRERA = c.ID
         JOIN ASISTENCIA s ON s.DNI = a.DNI
-        WHERE s.ID_EVENTO = %s
-    """, (evento_id,))
+        WHERE s.CODIGO_EVENTO = %s
+    """, (evento_CODIGO,))
     rows = cursor.fetchall()
     df = pd.DataFrame(rows)
 
@@ -88,30 +87,27 @@ def abrir_crear_evento():
     frame = tk.Frame(root, bg="#f0f0f0")
     frame.pack(fill="both", expand=True)
 
-    # Variables para almacenar los datos
     titulo_evento = tk.StringVar()
     imagen_path = tk.StringVar()
     excel_path = tk.StringVar()
 
-    # Función para seleccionar imagen
     def seleccionar_imagen():
         filepath = filedialog.askopenfilename(title="Seleccionar imagen", filetypes=[("Archivos JPG", "*.jpg")])
         if filepath:
             imagen_path.set(filepath)
             lbl_imagen.config(text=f"Imagen seleccionada: {os.path.basename(filepath)}")
 
-    # Función para seleccionar Excel
     def seleccionar_excel():
         filepath = filedialog.askopenfilename(title="Seleccionar archivo Excel", filetypes=[("Archivos Excel", "*.xlsx *.xls")])
         if filepath:
             excel_path.set(filepath)
             lbl_excel.config(text=f"Excel seleccionado: {os.path.basename(filepath)}")
 
-    # Función para guardar el evento
     def guardar_evento():
         titulo = titulo_evento.get().strip()
         img_path = imagen_path.get()
         exc_path = excel_path.get()
+        tipo = tipo_evento.get()
 
         if not titulo:
             messagebox.showwarning("Campo vacío", "Ingrese un título para el evento.")
@@ -123,24 +119,22 @@ def abrir_crear_evento():
             messagebox.showwarning("Excel faltante", "Seleccione un archivo Excel con los asistentes.")
             return
 
-        # Crear el evento en la base de datos
         conn = conectar_db()
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO EVENTO (TITULO) VALUES (%s)", (titulo,))
-        conn.commit()
-        evento_id = cursor.lastrowid
+        with open(img_path, "rb") as f:
+            imagen_bytes = f.read()
+        print(tipo)
+        codigo_generado =cursor.callproc('insertar_evento', (titulo, imagen_bytes, tipo, ""))
+        evento_codigo = codigo_generado[3] 
 
-        # Guardar la imagen
         os.makedirs("imagenes", exist_ok=True)
-        destino_img = f"imagenes/{evento_id}.jpg"
+        destino_img = f"imagenes/{evento_codigo}.jpg"
         with open(img_path, "rb") as src, open(destino_img, "wb") as dst:
             dst.write(src.read())
 
-        # Procesar el archivo Excel (aquí puedes agregar el código para procesar los asistentes)
         try:
             df = pd.read_excel(exc_path)
 
-            # Validar columnas esperadas
             columnas_esperadas = {"DNI", "APELLIDOS", "NOMBRES", "ESCUELA PROFESIONAL", "E-MAIL", "SEMESTRE", "ASISTIO"}
             if not columnas_esperadas.issubset(df.columns):
                 raise ValueError("El archivo Excel no contiene las columnas requeridas.")
@@ -161,9 +155,8 @@ def abrir_crear_evento():
 
                 id_carrera = carrera_map.get(carrera_nombre)
                 if not id_carrera:
-                    continue  # Saltar si la carrera no es válida
+                    continue  
 
-                # Verificar si el asistente ya existe
                 cursor.execute("SELECT COUNT(*) FROM ASISTENTE WHERE DNI = %s", (dni,))
                 existe = cursor.fetchone()[0]
 
@@ -171,72 +164,113 @@ def abrir_crear_evento():
                     datos_asistente =(dni, apellidos, nombres, id_carrera, correo, semestre)
                     cursor.callproc('insertar_asistente', datos_asistente)
                 
-                # Registrar en la tabla ASISTENCIA
-                datos_asistencia =(dni, evento_id, asistencia )
+                datos_asistencia =(dni, evento_codigo, asistencia )
                 cursor.callproc('insertar_asistencia', datos_asistencia)
 
                 insertados += 1
 
             conn.commit()
-            messagebox.showinfo("Éxito", f"Evento creado correctamente con ID: {evento_id}\n{insertados} registros procesados del Excel.")
+            messagebox.showinfo("Éxito", f"Evento creado correctamente con ID: {evento_codigo}\n{insertados} registros procesados del Excel.")
         except Exception as e:
             messagebox.showerror("Error", f"No se pudo procesar el archivo Excel: {str(e)}")
 
         
         conn.close()
         abrir_menu()
+    estilo_boton1 = {"width": 20, "padx": 5, "pady": 10, "bg": "#4CAF50", "fg": "white", "font": ("Arial", 10, "bold")}
 
-    # Interfaz para crear evento
     tk.Label(frame, text="Título del Evento:", bg="#f0f0f0", font=("Arial", 12)).pack(pady=10)
     entry_titulo = tk.Entry(frame, textvariable=titulo_evento, font=("Arial", 12), width=40)
     entry_titulo.pack(pady=5)
 
-    # Botón para seleccionar imagen
+    tipo_evento = tk.StringVar(value="EVENTO")
+    tk.Label(frame, text="Tipo:", bg="#f0f0f0", font=("Arial", 12)).pack(pady=10)
+    opciones = tk.OptionMenu(frame, tipo_evento, "EVENTO", "TALLER")
+    opciones.config(
+        font=("Arial", 14),
+        bg="#4CAF50",  
+        fg="white",
+        width=20,
+        highlightthickness=0,
+        bd=0,
+        activebackground="#4CAF50"
+    )
+    opciones["menu"].config(
+        font=("Arial", 12),
+        bg="#EDE7F6",
+        fg="black"
+    )
+    opciones.pack(pady=5)
+    
+
     tk.Label(frame, text="Imagen del Evento:", bg="#f0f0f0", font=("Arial", 12)).pack(pady=10)
     tk.Button(frame, text="Seleccionar Imagen", command=seleccionar_imagen, 
-              bg="#2196F3", fg="white", font=("Arial", 10, "bold")).pack(pady=5)
+              **estilo_boton1).pack(pady=5)
     lbl_imagen = tk.Label(frame, text="Ninguna imagen seleccionada", bg="#f0f0f0")
     lbl_imagen.pack(pady=5)
 
-    # Botón para seleccionar Excel
     tk.Label(frame, text="Lista de Asistentes (Excel):", bg="#f0f0f0", font=("Arial", 12)).pack(pady=10)
     tk.Button(frame, text="Seleccionar Archivo Excel", command=seleccionar_excel, 
-              bg="#4CAF50", fg="white", font=("Arial", 10, "bold")).pack(pady=5)
+              **estilo_boton1).pack(pady=5)
     lbl_excel = tk.Label(frame, text="Ningún archivo seleccionado", bg="#f0f0f0")
     lbl_excel.pack(pady=5)
 
-    # Botones de acción
     frame_botones = tk.Frame(frame, bg="#f0f0f0")
     frame_botones.pack(pady=20)
 
-    tk.Button(frame_botones, text="Guardar Evento", command=guardar_evento, 
-              bg="#4CAF50", fg="white", font=("Arial", 12, "bold")).pack(side="left", padx=10)
-    tk.Button(frame_botones, text="Volver al Menú", command=abrir_menu, 
-              bg="#FF5722", fg="white", font=("Arial", 12, "bold")).pack(side="left", padx=10)
+    estilo_boton2 = {"width": 20, "padx": 5, "pady": 10, "bg": "#000000", "fg": "white", "font": ("Arial", 10, "bold")}
 
-# Interfaz de consulta (el resto del código permanece igual)
+    tk.Button(frame_botones, text="Guardar Evento", command=guardar_evento, 
+              **estilo_boton2).pack(side="left", padx=10)
+    tk.Button(frame_botones, text="Volver al Menú", command=abrir_menu, 
+              **estilo_boton2).pack(side="left", padx=10)
+
 def abrir_consultas():
     for widget in root.winfo_children():
         widget.destroy()
 
-    frame_superior = tk.Frame(root)
-    frame_superior.pack(fill="both", expand=True)
+    def buscar_eventos():
+        query = busqueda_var.get().strip()
+        criterio = criterio_var.get()
 
-    global tree
-    tree = ttk.Treeview(frame_superior, columns=("ID", "Título"), show="headings")
-    tree.heading("ID", text="ID")
-    tree.heading("Título", text="Título")
-    tree.pack(side="left", fill="both", expand=True, pady=10, padx=10)
+        if not query:
+            messagebox.showinfo("Buscar", "Ingrese texto para buscar.")
+            return
 
-    scrollbar = ttk.Scrollbar(frame_superior, orient="vertical", command=tree.yview)
-    tree.configure(yscroll=scrollbar.set)
-    scrollbar.pack(side="right", fill="y")
+        for i in tree.get_children():
+            tree.delete(i)
 
+        conn = conectar_db()
+        cursor = conn.cursor()
+
+        if criterio == "Código":
+            cursor.execute("SELECT CODIGO, TITULO FROM EVENTO WHERE CODIGO LIKE %s", (f"%{query}%",))
+        elif criterio == "Título":
+            cursor.execute("SELECT CODIGO, TITULO FROM EVENTO WHERE TITULO LIKE %s", (f"%{query}%",))
+        elif criterio == "Mes":
+            try:
+                mes, anio = map(int, query.split("-"))  # ejemplo: "06-2025"
+                cursor.execute("""
+                    SELECT CODIGO, TITULO, DATE_FORMAT(FECHA, '%d-%m-%Y') AS FECHA 
+                    FROM EVENTO 
+                    WHERE MONTH(FECHA) = %s AND YEAR(FECHA) = %s
+                """, (mes, anio))
+            except:
+                messagebox.showerror("Error", "Ingrese mes y año en formato MM-AAAA. Ej: 06-2025")
+                conn.close()
+                return
+
+        eventos = cursor.fetchall()
+        for ev in eventos:
+            tree.insert("", "end", values=ev)
+        conn.close()
+    
     def cargar_eventos():
         conn = conectar_db()
         cursor = conn.cursor()
-        cursor.execute("SELECT ID, TITULO FROM EVENTO")
-        eventos = cursor.fetchall()
+        cursor.callproc('cargar_eventos')
+        for result in cursor.stored_results():
+            eventos = result.fetchall()
         for ev in eventos:
             tree.insert("", "end", values=ev)
         conn.close()
@@ -247,7 +281,7 @@ def abrir_consultas():
             messagebox.showwarning("Seleccione un evento", "Debe seleccionar un evento.")
             return
         item = tree.item(seleccionado)
-        evento_id, titulo = item['values']
+        evento_CODIGO, titulo, fecha = item['values']
 
         conn = conectar_db()
         cursor = conn.cursor(dictionary=True)
@@ -256,8 +290,8 @@ def abrir_consultas():
             FROM ASISTENTE a
             JOIN CARRERA c ON a.ID_CARRERA = c.ID
             JOIN ASISTENCIA s ON s.DNI = a.DNI
-            WHERE s.ID_EVENTO = %s
-        """, (evento_id,))
+            WHERE s.CODIGO_EVENTO = %s
+        """, (evento_CODIGO,))
         rows = cursor.fetchall()
         conn.close()
 
@@ -274,7 +308,7 @@ def abrir_consultas():
             messagebox.showwarning("Seleccione un evento", "Debe seleccionar un evento.")
             return
         item = tree.item(seleccionado)
-        evento_id, titulo = item['values']
+        evento_CODIGO, titulo, fecha = item['values']
 
         conn = conectar_db()
         cursor = conn.cursor(dictionary=True)
@@ -283,8 +317,8 @@ def abrir_consultas():
             FROM ASISTENTE a
             JOIN CARRERA c ON a.ID_CARRERA = c.ID
             JOIN ASISTENCIA s ON s.DNI = a.DNI
-            WHERE s.ID_EVENTO = %s AND ASISTIO = %s
-        """, (evento_id, True,))
+            WHERE s.CODIGO_EVENTO = %s AND ASISTIO = %s
+        """, (evento_CODIGO, True,))
         rows = cursor.fetchall()
         conn.close()
 
@@ -300,13 +334,29 @@ def abrir_consultas():
             widget.destroy()
 
         frame_resultado = tk.Frame(root)
-        frame_resultado.pack(fill="both", expand=True)
+        frame_resultado.pack(fill="both", expand=True, padx=10, pady=10)
 
-        txt = tk.Text(frame_resultado)
-        txt.pack(expand=True, fill="both")
-        txt.insert("1.0", df.to_string(index=False))
+        # Crear Treeview con scroll
+        tree_datos = ttk.Treeview(frame_resultado, show="headings")
+        tree_datos.pack(side="left", fill="both", expand=True)
 
-        tk.Button(frame_resultado, text="Volver", command=abrir_consultas, bg="#FF5722", fg="white", font=("Arial", 10, "bold")).pack(pady=10)
+        scrollbar = ttk.Scrollbar(frame_resultado, orient="vertical", command=tree_datos.yview)
+        scrollbar.pack(side="right", fill="y")
+        tree_datos.configure(yscroll=scrollbar.set)
+
+        # Configurar columnas
+        tree_datos["columns"] = list(df.columns)
+        for col in df.columns:
+            tree_datos.heading(col, text=col)
+            tree_datos.column(col, width=100, anchor="center")
+
+        # Insertar datos
+        for _, row in df.iterrows():
+            tree_datos.insert("", "end", values=list(row))
+
+        # Botón volver
+        tk.Button(root, text="Volver", command=abrir_consultas,
+                bg="#FF5722", fg="white", font=("Arial", 10, "bold")).pack(pady=10)
 
     def exportar():
         seleccionado = tree.selection()
@@ -314,23 +364,30 @@ def abrir_consultas():
             messagebox.showwarning("Seleccione un evento", "Debe seleccionar un evento.")
             return
         item = tree.item(seleccionado)
-        evento_id, titulo = item['values']
-        exportar_asistentes(evento_id, titulo)
+        evento_CODIGO, titulo, fecha = item['values']
+        exportar_asistentes(evento_CODIGO, titulo)
 
     def mostrar_imagen():
         seleccionado = tree.selection()
         if not seleccionado:
             messagebox.showwarning("Seleccione un evento", "Debe seleccionar un evento.")
             return
-        item = tree.item(seleccionado)
-        evento_id, titulo = item['values']
 
-        imagen_path = f"imagenes/{evento_id}.jpg"
-        if not os.path.exists(imagen_path):
-            messagebox.showinfo("Sin imagen", "No se encontró imagen para este evento.")
+        item = tree.item(seleccionado)
+        evento_CODIGO, titulo, fecha = item['values']
+
+        conn = conectar_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT IMAGEN FROM EVENTO WHERE CODIGO = %s", (evento_CODIGO,))
+        resultado = cursor.fetchone()
+        conn.close()
+
+        if not resultado or resultado[0] is None:
+            messagebox.showinfo("Sin imagen", "No se encontró imagen para este evento en la base de datos.")
             return
 
-        img = Image.open(imagen_path)
+        imagen_bytes = resultado[0]
+        img = Image.open(io.BytesIO(imagen_bytes))
         img = img.resize((500, 400))
         img_tk = ImageTk.PhotoImage(img)
 
@@ -344,22 +401,50 @@ def abrir_consultas():
         lbl.image = img_tk
         lbl.pack(pady=20)
 
-        tk.Button(frame_img, text="Volver", command=abrir_consultas, bg="#FF5722", fg="white").pack(pady=10)
+        tk.Button(frame_img, text="Volver", command=abrir_consultas, bg="#4CAF50", fg="white", width=20, padx=5, pady=5, font=("Arial", 10, "bold")).pack(pady=10)
+
+    estilo_boton = {"width": 20, "padx": 5, "pady": 5, "bg": "#4CAF50", "fg": "white", "font": ("Arial", 10, "bold")}
+    frame_busqueda = tk.Frame(root)
+    frame_busqueda.pack(pady=10)
+
+    busqueda_var = tk.StringVar()
+    criterio_var = tk.StringVar(value="Código")  # Por defecto
+    criterios = ["Código", "Título", "Mes"]
+
+
+    tk.OptionMenu(frame_busqueda, criterio_var, *criterios).pack(side="left", padx=5)
+    tk.Entry(frame_busqueda, textvariable=busqueda_var, font=("Arial", 10), width=40).pack(side="left", padx=5)
+    tk.Button(frame_busqueda, text="Buscar", command=buscar_eventos, **estilo_boton).pack(side="left", padx=5)
+
+    frame_superior = tk.Frame(root)
+    frame_superior.pack(fill="both", expand=True)
+
+    global tree
+    tree = ttk.Treeview(frame_superior, columns=("Código", "Título", "Fecha"), show="headings")
+    tree.heading("Código", text="Código")
+    tree.heading("Título", text="Título")
+    tree.heading("Fecha", text="Fecha de Creación")
+    tree.column("Código", width=80, anchor="center")
+    tree.column("Título", width=500)
+    tree.column("Fecha", width=100, anchor="center")
+    tree.pack(side="left", fill="both", expand=True, pady=10, padx=10)
+
+    scrollbar = ttk.Scrollbar(frame_superior, orient="vertical", command=tree.yview)
+    tree.configure(yscroll=scrollbar.set)
+    scrollbar.pack(side="right", fill="y")
+    
 
     frame_botones = tk.Frame(root)
     frame_botones.pack(pady=10)
-
-    estilo_boton = {"width": 20, "padx": 5, "pady": 5, "bg": "#4CAF50", "fg": "white", "font": ("Arial", 10, "bold")}
 
     tk.Button(frame_botones, text="Ver Inscritos", command=mostrar_inscritos, **estilo_boton).pack(side="left")
     tk.Button(frame_botones, text="Ver Asistentes", command=mostrar_asistentes, **estilo_boton).pack(side="left")
     tk.Button(frame_botones, text="Exportar por Carrera", command=exportar, **estilo_boton).pack(side="left")
     tk.Button(frame_botones, text="Ver Imagen", command=mostrar_imagen, **estilo_boton).pack(side="left")
     tk.Button(frame_botones, text="Menú Principal", command=abrir_menu, **estilo_boton).pack(side="left")
-
+    
     cargar_eventos()
 
-# Menú principal
 def abrir_menu():
     for widget in root.winfo_children():
         widget.destroy()
@@ -367,16 +452,23 @@ def abrir_menu():
     frame_inicio = tk.Frame(root, bg="#f0f0f0")
     frame_inicio.pack(expand=True)
 
-    btn1 = tk.Button(frame_inicio, text="Crear Evento", width=25, bg="#2196F3", fg="white", font=("Arial", 12, "bold"), command=abrir_crear_evento)
-    btn1.pack(pady=20)
+    btn1 = tk.Button(
+        frame_inicio, text="Crear Evento", width=30, height=3,
+        bg="#2196F3", fg="white", font=("Arial", 16, "bold"),
+        command=abrir_crear_evento
+    )
+    btn1.pack(pady=30)
 
-    btn2 = tk.Button(frame_inicio, text="Consultas", width=25, command=abrir_consultas, bg="#4CAF50", fg="white", font=("Arial", 12, "bold"))
+    btn2 = tk.Button(
+        frame_inicio, text="Consultas", width=30, height=3,
+        bg="#4CAF50", fg="white", font=("Arial", 16, "bold"),
+        command=abrir_consultas
+    )
     btn2.pack(pady=10)
 
-# Iniciar app
 root = tk.Tk()
 root.title("CertiGest")
-root.geometry("900x600")
+root.geometry("1400x700")
 root.configure(bg="#f0f0f0")
 abrir_menu()
 root.mainloop()
