@@ -127,11 +127,6 @@ def abrir_crear_evento():
         codigo_generado =cursor.callproc('insertar_evento', (titulo, imagen_bytes, tipo, ""))
         evento_codigo = codigo_generado[3] 
 
-        os.makedirs("imagenes", exist_ok=True)
-        destino_img = f"imagenes/{evento_codigo}.jpg"
-        with open(img_path, "rb") as src, open(destino_img, "wb") as dst:
-            dst.write(src.read())
-
         try:
             df = pd.read_excel(exc_path)
 
