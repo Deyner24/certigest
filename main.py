@@ -228,13 +228,26 @@ def abrir_crear_evento():
 def abrir_consultas():
     for widget in root.winfo_children():
         widget.destroy()
-
+    
+    def cargar_eventos():
+        conn = conectar_db()
+        cursor = conn.cursor()
+        cursor.callproc('cargar_eventos')
+        for result in cursor.stored_results():
+            eventos = result.fetchall()
+        for ev in eventos:
+            tree.insert("", "end", values=ev)
+        conn.close()
+    
     def buscar_eventos():
         query = busqueda_var.get().strip()
         criterio = criterio_var.get()
 
+        for i in tree.get_children():
+            tree.delete(i)
+
         if not query:
-            messagebox.showinfo("Buscar", "Ingrese texto para buscar.")
+            cargar_eventos()
             return
 
         for i in tree.get_children():
@@ -242,14 +255,15 @@ def abrir_consultas():
 
         conn = conectar_db()
         cursor = conn.cursor()
+            
 
         if criterio == "Código":
-            cursor.execute("SELECT CODIGO, TITULO FROM EVENTO WHERE CODIGO LIKE %s", (f"%{query}%",))
+            cursor.execute("SELECT CODIGO, TITULO, DATE_FORMAT(FECHA, '%d-%m-%Y') FROM EVENTO WHERE CODIGO LIKE %s", (f"%{query}%",))
         elif criterio == "Título":
-            cursor.execute("SELECT CODIGO, TITULO FROM EVENTO WHERE TITULO LIKE %s", (f"%{query}%",))
-        elif criterio == "Mes":
+            cursor.execute("SELECT CODIGO, TITULO, DATE_FORMAT(FECHA, '%d-%m-%Y') FROM EVENTO WHERE TITULO LIKE %s", (f"%{query}%",))
+        elif criterio == "Fecha":
             try:
-                mes, anio = map(int, query.split("-"))  # ejemplo: "06-2025"
+                mes, anio = map(int, query.split("-"))  # ejemplo: "06-2025"    
                 cursor.execute("""
                     SELECT CODIGO, TITULO, DATE_FORMAT(FECHA, '%d-%m-%Y') AS FECHA 
                     FROM EVENTO 
@@ -261,16 +275,6 @@ def abrir_consultas():
                 return
 
         eventos = cursor.fetchall()
-        for ev in eventos:
-            tree.insert("", "end", values=ev)
-        conn.close()
-    
-    def cargar_eventos():
-        conn = conectar_db()
-        cursor = conn.cursor()
-        cursor.callproc('cargar_eventos')
-        for result in cursor.stored_results():
-            eventos = result.fetchall()
         for ev in eventos:
             tree.insert("", "end", values=ev)
         conn.close()
@@ -409,7 +413,7 @@ def abrir_consultas():
 
     busqueda_var = tk.StringVar()
     criterio_var = tk.StringVar(value="Código")  # Por defecto
-    criterios = ["Código", "Título", "Mes"]
+    criterios = ["Código", "Título", "Fecha"]
 
 
     tk.OptionMenu(frame_busqueda, criterio_var, *criterios).pack(side="left", padx=5)
@@ -453,7 +457,7 @@ def abrir_menu():
     frame_inicio.pack(expand=True)
 
     btn1 = tk.Button(
-        frame_inicio, text="Crear Evento", width=30, height=3,
+        frame_inicio, text="Crear Evento o Taller", width=30, height=3,
         bg="#2196F3", fg="white", font=("Arial", 16, "bold"),
         command=abrir_crear_evento
     )
