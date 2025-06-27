@@ -5,6 +5,10 @@ import mysql.connector
 import pandas as pd
 import os
 import io
+from openpyxl import load_workbook, Workbook
+from openpyxl.drawing.image import Image as ExcelImage
+from openpyxl.utils import get_column_letter
+from openpyxl.styles import Font, Alignment
 
 carrera_map = {
     "COMUNICACIÓN SOCIAL": "01",
@@ -56,6 +60,14 @@ def exportar_asistentes(evento_CODIGO, evento_nombre):
     conn = conectar_db()
     cursor = conn.cursor(dictionary=True)
 
+    # Obtener título, fecha e imagen del evento
+    cursor.execute("SELECT TITULO, DATE_FORMAT(FECHA, '%d-%m-%Y') as FECHA, IMAGEN FROM EVENTO WHERE CODIGO = %s", (evento_CODIGO,))
+    evento_info = cursor.fetchone()
+    titulo = evento_info["TITULO"]
+    fecha = evento_info["FECHA"]
+    imagen_bytes = evento_info["IMAGEN"]
+
+    # Obtener datos de asistentes
     cursor.execute("""
         SELECT a.DNI, a.APELLIDOS, a.NOMBRES, c.NOMBRE AS CARRERA, a.CORREO, a.SEMESTRE
         FROM ASISTENTE a
@@ -75,7 +87,47 @@ def exportar_asistentes(evento_CODIGO, evento_nombre):
 
     for carrera, grupo in df.groupby("CARRERA"):
         archivo = os.path.join(carpeta, f"{carrera}.xlsx")
-        grupo.to_excel(archivo, index=False)
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Asistentes"
+
+        # Título del evento en la parte superior
+        ws.merge_cells('A1:F1')
+        ws['A1'].value = f"{titulo} - {fecha}"
+        ws['A1'].font = Font(size=16, bold=True)
+        ws['A1'].alignment = Alignment(horizontal="center")
+
+        # Encabezados de columnas desde fila 3
+        start_row = 3
+        for col_index, col_name in enumerate(grupo.columns, start=1):
+            cell = ws.cell(row=start_row, column=col_index, value=col_name)
+            cell.font = Font(bold=True)
+            cell.alignment = Alignment(horizontal="center")
+
+        # Insertar datos desde la fila 4 en adelante
+        for row_index, row in enumerate(grupo.values, start=start_row + 1):
+            for col_index, value in enumerate(row, start=1):
+                ws.cell(row=row_index, column=col_index, value=value)
+
+        # Ajustar ancho de columnas
+        for col_index, column in enumerate(grupo.columns, start=1):
+            max_length = max(len(str(cell)) for cell in grupo[column].values)
+            adjusted_width = max(max_length + 2, 15)
+            col_letter = get_column_letter(col_index)
+            ws.column_dimensions[col_letter].width = adjusted_width
+
+        # Insertar imagen después de la tabla
+        if imagen_bytes:
+            image_stream = io.BytesIO(imagen_bytes)
+            img = ExcelImage(image_stream)
+            img.width = 300
+            img.height = 150
+            final_row = start_row + len(grupo) + 3  # Espacio después de la tabla
+            img_cell = f"A{final_row}"
+            ws.add_image(img, img_cell)
+
+        wb.save(archivo)
 
     messagebox.showinfo("Exportación Completa", f"Asistentes exportados en la carpeta: {carpeta}")
     conn.close()
@@ -123,7 +175,6 @@ def abrir_crear_evento():
         cursor = conn.cursor()
         with open(img_path, "rb") as f:
             imagen_bytes = f.read()
-        print(tipo)
         codigo_generado =cursor.callproc('insertar_evento', (titulo, imagen_bytes, tipo, ""))
         evento_codigo = codigo_generado[3] 
 
@@ -289,7 +340,7 @@ def abrir_consultas():
             FROM ASISTENTE a
             JOIN CARRERA c ON a.ID_CARRERA = c.ID
             JOIN ASISTENCIA s ON s.DNI = a.DNI
-            WHERE s.CODIGO_EVENTO = %s
+            WHERE s.CODIGO_EVENTO = %s ORDER BY a.APELLIDOS
         """, (evento_CODIGO,))
         rows = cursor.fetchall()
         conn.close()
@@ -316,7 +367,7 @@ def abrir_consultas():
             FROM ASISTENTE a
             JOIN CARRERA c ON a.ID_CARRERA = c.ID
             JOIN ASISTENCIA s ON s.DNI = a.DNI
-            WHERE s.CODIGO_EVENTO = %s AND ASISTIO = %s
+            WHERE s.CODIGO_EVENTO = %s AND ASISTIO = %s ORDER BY a.APELLIDOS    
         """, (evento_CODIGO, True,))
         rows = cursor.fetchall()
         conn.close()
